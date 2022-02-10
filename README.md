@@ -1,6 +1,7 @@
 # mongodb-x509-certificates-gen
 
 to read the certificate use
+
 `openssl x509 -text -noout -in cert.pem`
 
 
