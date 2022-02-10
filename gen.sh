@@ -1,3 +1,11 @@
+##################################################################################
+# x509 certificates generation for MongoDB
+# this script will create a CA, server and client certs
+##################################################################################
+
+## LIST OF SERVER AND CLIENTS FOR CERTIFICATE GENERATION
+mongodb_server_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" )
+mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3", "ilians-macbook" )
 
 ## VARIABLES ## 
 rootCAName="ca.pem"
@@ -12,10 +20,8 @@ dn_prefix="/C=$C/ST=$ST/L=$L/O=$O"
 ou_member="MongoDB-Server" #organization unit server
 ou_client="MongoDB-Client" #organization unit client
 
-## LIST OF SERVER AND CLIENTS FOR CERTIFICATE GENERATION
-mongodb_server_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" )
-mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3", "ilians-macbook" )
 
+##################################################################################
 
 mkdir gen && cd gen
 
@@ -47,7 +53,7 @@ serial          = \$dir/ca.db.serial
 private_key     = \$dir/root-ca.key
 RANDFILE        = \$dir/ca.db.rand
 default_md      = sha256
-default_days    = 3650
+default_days    = 365
 default_crl_days= 30
 email_in_dn     = no
 unique_subject  = no
@@ -63,7 +69,7 @@ serial          = \$dir/ca.db.serial
 private_key     = \$dir/signing-ca.key
 RANDFILE        = \$dir/ca.db.rand
 default_md      = sha256
-default_days    = 3650
+default_days    = 365
 default_crl_days= 30
 email_in_dn     = no
 unique_subject  = no
@@ -92,7 +98,7 @@ openssl genrsa -out signing-ca.key 2048
 # !!! In production you will want to use -aes256 to password protect the keys
 # openssl genrsa -aes256 -out signing-ca.key 2048
 
-openssl req -new -days 1460 -key signing-ca.key -out signing-ca.csr -subj "$dn_prefix/CN=CA-SIGNER"
+openssl req -new -days 365 -key signing-ca.key -out signing-ca.csr -subj "$dn_prefix/CN=CA-SIGNER"
 openssl ca -batch -name RootCA -config root-ca.cfg -extensions v3_ca -out signing-ca.crt -infiles signing-ca.csr 
 
 mkdir -p SigningCA/ca.db.certs
@@ -139,16 +145,34 @@ for host in "${mongodb_server_hosts[@]}"; do
 		DNS.1 = ${host}.station
 		DNS.2 = ${host}
 	EOF
+	
     # Create the test key file mongodb-test-server1.key.
-    openssl genrsa -out ${host}.server.key 4096
+    openssl genrsa -out ${host}.server.key 2048
 
-    # Create the test certificate signing request mongodb-test-server1.csr
+    # Create the  certificate signing request 
     openssl req -new -key ${host}.server.key -out ${host}.server.csr -config csr_details_${host}.cfg
 
-    # Create the test server certificate mongodb-test-server1.crt.
+    # Create the server certificate 
     openssl x509 -sha256 -req -days 365 -in ${host}.server.csr  -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions req_ext
 
     # combine all together
-	cat ${host}.server.crt ${host}.server.key > ${host}.server.pem
+    cat ${host}.server.crt ${host}.server.key > ${host}.server.pem
 done 
 
+
+
+# echo "##### STEP 5: Create client certificates"
+# # Now create & sign keys for each client
+# # Pay attention to the OU part of the subject in "openssl req" command
+for host in "${mongodb_client_hosts[@]}"; do
+	echo "Generating certificate for client $host"
+	# key gen
+  	openssl genrsa  -out ${host}.client.key 2048
+	# cert signing request
+	openssl req -new -key ${host}.client.key -out ${host}.client.csr -subj "$dn_prefix/OU=$ou_client/CN=${host}" 
+	# sign the cert
+    openssl x509 -sha256 -req -days 365 -in ${host}.client.csr  -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.client.crt
+
+	# combine all together
+	cat ${host}.client.crt ${host}.client.key > ${host}.client.pem
+done 
