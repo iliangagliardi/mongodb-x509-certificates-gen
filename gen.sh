@@ -5,7 +5,7 @@
 
 ## LIST OF SERVER AND CLIENTS FOR CERTIFICATE GENERATION
 mongodb_server_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" )
-mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3", "ilians-macbook" )
+mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" "ilians-macbook" )
 
 ## VARIABLES ## 
 rootCAName="ca.pem"
@@ -17,8 +17,8 @@ L="Milan"  # lieu
 O="MongoDB" # company name
 
 dn_prefix="/C=$C/ST=$ST/L=$L/O=$O"
-ou_member="MongoDB-Server" #organization unit server
-ou_client="MongoDB-Client" #organization unit client
+ou_member="MongoDB-Server" #organization unit for mongod processes
+ou_client="MongoDB-Client" #organization unit for client (drivers, agents)
 
 
 ##################################################################################
