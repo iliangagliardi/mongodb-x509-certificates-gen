@@ -1,15 +1,14 @@
 ##################################################################################
 # x509 certificates generation for MongoDB
-# this script will create a CA, server and client certs
+# this script will create a CA, server and client certificates
+# do not use this in production environments!
 ##################################################################################
-
-## LIST OF SERVER AND CLIENTS FOR CERTIFICATE GENERATION
-mongodb_server_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" )
-mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" "ilians-macbook" )
-
-## VARIABLES ## 
+## CA ##
+#genCA=true to implement
 rootCAName="ca.pem"
 
+
+## INFOS ## 
 admin_email="ilian.gagliardi@mongodb.com"
 C="IT" # country code
 ST="Italy" # state
@@ -19,6 +18,33 @@ O="MongoDB" # company name
 dn_prefix="/C=$C/ST=$ST/L=$L/O=$O"
 ou_member="MongoDB-Server" #organization unit for mongod processes
 ou_client="MongoDB-Client" #organization unit for client (drivers, agents)
+
+## LIST OF THE CLIENTS IN NEED OF A CERTIFICATE
+mongodb_client_hosts=( "mongodb-node1" "mongodb-node2" "mongodb-node3" "ilians-macbook" )
+
+## SERVER LIST FOR CERTIFICATE GENERATION
+## The configuration is JSON based in order to manage subject alternative names in a dynamic way
+server_hosts_conf='{
+        "servers":[
+            {
+                "server" : "mongodb-node1",
+                "DNS.1" : "mongodb-node1.station",
+                "IP.1" : "192.168.1.28"
+            },
+            {
+                "server" : "mongodb-node2",
+                "DNS.1" : "mongodb-node2.station",
+                "IP.1" : "192.168.1.29"
+            },
+            {
+                "server" : "mongodb-node3",
+                "DNS.1" : "mongodb-node3.station",
+                "IP.1" : "192.168.1.30"
+            }      
+        ]
+    }'
+
+
 
 
 ##################################################################################
@@ -111,11 +137,19 @@ mv signing-ca* SigningCA/
 # Create ca.pem
 cat RootCA/root-ca.crt SigningCA/signing-ca.crt > $rootCAName
 
+
+
 echo "######################################################################################"
 echo "##### STEP 4: Create server certificates"
+
 # Now create & sign keys for each mongod server 
 # Pay attention to the OU part of the subject in "openssl req" command
 # You may want to use FQDNs instead of short hostname
+
+mongodb_server_hosts=( $(jq -r '.servers[].server' <<< "$server_hosts_conf") )
+mongodb_server_altNamesDNS1=( $(jq -r '.servers[]."DNS.1"' <<< "$server_hosts_conf") )
+mongodb_server_altNamesIP1=( $(jq -r '.servers[]."IP.1"' <<< "$server_hosts_conf") )
+
 for host in "${mongodb_server_hosts[@]}"; do
     echo "######################################################################################"
 	echo "Generating certificate for server $host"
@@ -142,8 +176,9 @@ for host in "${mongodb_server_hosts[@]}"; do
 		subjectAltName=@alt_names
 
 		[ alt_names ]
-		DNS.1 = ${host}.station
-		DNS.2 = ${host}
+		DNS.1 = ${mongodb_server_altNamesDNS1[$host]}
+		DNS.2 = ${mongodb_server_hosts[$host]}
+		IP.1 = ${mongodb_server_altNamesIP1[$host]}
 	EOF
 	
     # Create the test key file mongodb-test-server1.key.
@@ -153,7 +188,7 @@ for host in "${mongodb_server_hosts[@]}"; do
     openssl req -new -key ${host}.server.key -out ${host}.server.csr -config csr_details_${host}.cfg
 
     # Create the server certificate 
-    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr  -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions req_ext
+    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions req_ext
 
     # combine all together
     cat ${host}.server.crt ${host}.server.key > ${host}.server.pem
