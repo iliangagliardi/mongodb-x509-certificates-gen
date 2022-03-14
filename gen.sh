@@ -40,7 +40,12 @@ server_hosts_conf='{
                 "server" : "mongodb-node3",
                 "DNS.1" : "mongodb-node3.station",
                 "IP.1" : "192.168.1.30"
-            }      
+            },
+            {
+                "server" : "mongodb-opsmanager",
+                "DNS.1" : "mongodb-opsmanager.station",
+                "IP.1" : "192.168.1.26"
+            }
         ]
     }'
 
@@ -49,7 +54,8 @@ server_hosts_conf='{
 
 ##################################################################################
 
-mkdir gen && cd gen
+mkdir gen
+cd gen
 
 echo "######################################################################################"
 echo "##### STEP 1: Generate root CA "
@@ -145,13 +151,14 @@ echo "##### STEP 4: Create server certificates"
 # Now create & sign keys for each mongod server 
 # Pay attention to the OU part of the subject in "openssl req" command
 # You may want to use FQDNs instead of short hostname
-
 mongodb_server_hosts=( $(jq -r '.servers[].server' <<< "$server_hosts_conf") )
 mongodb_server_altNamesDNS1=( $(jq -r '.servers[]."DNS.1"' <<< "$server_hosts_conf") )
 mongodb_server_altNamesIP1=( $(jq -r '.servers[]."IP.1"' <<< "$server_hosts_conf") )
 
-for host in "${mongodb_server_hosts[@]}"; do
+length=${#mongodb_server_hosts[@]}
+for (( idx = 0; idx < length; idx++ )); do
     echo "######################################################################################"
+	host=${mongodb_server_hosts[$idx]}
 	echo "Generating certificate for server $host"
   	
 	cat > "csr_details_${host}.cfg" <<-EOF
@@ -159,27 +166,31 @@ for host in "${mongodb_server_hosts[@]}"; do
 		default_bits = 2048
 		prompt = no
 		default_md = sha256
-		req_extensions = req_ext
-		distinguished_name = dn
+		distinguished_name = req_dn
+		req_extensions = v3_req
 
-		[ dn ] 
+		[ req_dn ] 
 		C=${C}
 		ST=${ST}
 		L=${L}
 		O=${O}
 		OU=${ou_member}
-		emailAddress=${admin_email}
 		CN=${host}
 
-		[ req_ext ]
-		extendedKeyUsage=serverAuth, clientAuth
+		[ v3_req ]
+		subjectKeyIdentifier  = hash
+		basicConstraints = CA:FALSE
+		keyUsage = critical, digitalSignature, keyEncipherment
+		nsComment = "OpenSSL Generated Certificate for TESTING only.  NOT FOR PRODUCTION USE."
+		extendedKeyUsage  = serverAuth, clientAuth
 		subjectAltName=@alt_names
 
 		[ alt_names ]
-		DNS.1 = ${mongodb_server_altNamesDNS1[$host]}
-		DNS.2 = ${mongodb_server_hosts[$host]}
-		IP.1 = ${mongodb_server_altNamesIP1[$host]}
+		DNS.1 = ${mongodb_server_altNamesDNS1[$idx]}
+		DNS.2 = ${mongodb_server_hosts[$idx]}
+		IP.1 = ${mongodb_server_altNamesIP1[$idx]}
 	EOF
+
 	
     # Create the test key file mongodb-test-server1.key.
     openssl genrsa -out ${host}.server.key 2048
@@ -188,7 +199,7 @@ for host in "${mongodb_server_hosts[@]}"; do
     openssl req -new -key ${host}.server.key -out ${host}.server.csr -config csr_details_${host}.cfg
 
     # Create the server certificate 
-    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions req_ext
+    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions v3_req
 
     # combine all together
     cat ${host}.server.crt ${host}.server.key > ${host}.server.pem
@@ -196,9 +207,9 @@ done
 
 
 
-# echo "##### STEP 5: Create client certificates"
-# # Now create & sign keys for each client
-# # Pay attention to the OU part of the subject in "openssl req" command
+echo "##### STEP 5: Create client certificates"
+# Now create & sign keys for each client
+# Pay attention to the OU part of the subject in "openssl req" command
 for host in "${mongodb_client_hosts[@]}"; do
 	echo "Generating certificate for client $host"
 	# key gen
