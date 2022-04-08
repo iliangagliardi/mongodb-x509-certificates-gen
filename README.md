@@ -7,6 +7,7 @@ to read details of the certificate, use
 to validate client certificate using the CA-chain specified on the server 
 
 `openssl verify -verbose -CAfile ca_chain.pem -purpose sslclient client.pem`
+
 `gen/client.pem: OK`
 
 
