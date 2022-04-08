@@ -5,11 +5,10 @@
 ##################################################################################
 ## CA ##
 #genCA=true to implement
-rootCAName="ca.pem"
+CAFILE="ca_chain.pem"
 
 
 ## INFOS ## 
-admin_email="ilian.gagliardi@mongodb.com"
 C="IT" # country code
 ST="Italy" # state
 L="Milan"  # lieu
@@ -53,96 +52,69 @@ server_hosts_conf='{
 
 
 ##################################################################################
-
 mkdir gen
 cd gen
 
 echo "######################################################################################"
-echo "##### STEP 1: Generate root CA "
-openssl genrsa -out root-ca.key 2048
-# !!! In production you will want to use -aes256 to password protect the keys
-# openssl genrsa -aes256 -out root-ca.key 2048
+echo "##### STEP 1: Generate CA "
 
-openssl req -new -x509 -days 3650 -key root-ca.key -out root-ca.crt -subj "$dn_prefix/CN=ROOTCA"
-
-mkdir -p RootCA/ca.db.certs
-echo "01" >> RootCA/ca.db.serial
-touch RootCA/ca.db.index
-echo $RANDOM >> RootCA/ca.db.rand
-mv root-ca* RootCA/
-
-echo "######################################################################################"
-echo "##### STEP 2: Create CA config"
 # Generate CA config
-cat >> root-ca.cfg <<EOF
-[ RootCA ]
-dir             = ./RootCA
-certs           = \$dir/ca.db.certs
-database        = \$dir/ca.db.index
-new_certs_dir   = \$dir/ca.db.certs
-certificate     = \$dir/root-ca.crt
-serial          = \$dir/ca.db.serial
-private_key     = \$dir/root-ca.key
-RANDFILE        = \$dir/ca.db.rand
-default_md      = sha256
-default_days    = 365
-default_crl_days= 30
-email_in_dn     = no
-unique_subject  = no
-policy          = policy_match
-
-[ SigningCA ]
-dir             = ./SigningCA
-certs           = \$dir/ca.db.certs
-database        = \$dir/ca.db.index
-new_certs_dir   = \$dir/ca.db.certs
-certificate     = \$dir/signing-ca.crt
-serial          = \$dir/ca.db.serial
-private_key     = \$dir/signing-ca.key
-RANDFILE        = \$dir/ca.db.rand
-default_md      = sha256
-default_days    = 365
-default_crl_days= 30
-email_in_dn     = no
-unique_subject  = no
-policy          = policy_match
- 
+cat >> mongodb-ca.cfg <<EOF
 [ policy_match ]
-countryName     = match
+countryName = match
 stateOrProvinceName = match
-localityName            = match
-organizationName    = match
-organizationalUnitName  = optional
-commonName      = supplied
-emailAddress        = optional
+organizationName = match
+organizationalUnitName = optional
+commonName = supplied
+emailAddress = optional
+
+[ req ]
+default_bits = 4096
+default_keyfile = myTestCertificateKey.pem    ## The default private key file name.
+default_md = sha256                           ## Use SHA-256 for Signatures
+req_extensions = v3_req
+x509_extensions = v3_ca # The extentions to add to the self signed cert
+distinguished_name = req_dn
 
 [ v3_req ]
+subjectKeyIdentifier  = hash
 basicConstraints = CA:FALSE
-keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+keyUsage = critical, digitalSignature, keyEncipherment
+nsComment = "OpenSSL Generated Certificate for TESTING only.  NOT FOR PRODUCTION USE."
+extendedKeyUsage  = serverAuth, clientAuth
 
 [ v3_ca ]
-basicConstraints = CA:true
+subjectKeyIdentifier=hash
+basicConstraints = critical,CA:true
+authorityKeyIdentifier=keyid:always,issuer:always
+
+[ req_dn ] 
+C=${C}
+ST=${ST}
+L=${L}
+O=${O}
+OU=MONGODB-CA
+CN=MONGODB-CA
+
 EOF
-echo "######################################################################################"
-echo "##### STEP 3: Generate signing key"
-# We do not use root key to sign certificate, instead we generate a signing key
-openssl genrsa -out signing-ca.key 2048
-# !!! In production you will want to use -aes256 to password protect the keys
-# openssl genrsa -aes256 -out signing-ca.key 2048
 
-openssl req -new -days 365 -key signing-ca.key -out signing-ca.csr -subj "$dn_prefix/CN=CA-SIGNER"
-openssl ca -batch -name RootCA -config root-ca.cfg -extensions v3_ca -out signing-ca.crt -infiles signing-ca.csr 
+# ca key
+openssl genrsa -out mongodb-ca.key 4096
 
-mkdir -p SigningCA/ca.db.certs
-echo "01" >> SigningCA/ca.db.serial
-touch SigningCA/ca.db.index
-# Should use a better source of random here..
-echo $RANDOM >> SigningCA/ca.db.rand
-mv signing-ca* SigningCA/
+# cert ca gen
+openssl req -new -x509 -days 1826 -key mongodb-ca.key -out mongodb-ca.crt -config mongodb-ca.cfg -subj "$dn_prefix/CN=ROOTCA"
 
-# Create ca.pem
-cat RootCA/root-ca.crt SigningCA/signing-ca.crt > $rootCAName
+# intermediate key
+openssl genrsa -out mongodb-ia.key 4096
 
+# certificate signing request for the intermediate certificate
+openssl req -new -key mongodb-ia.key -out mongodb-ia.csr -config mongodb-ca.cfg -subj "$dn_prefix/CN=CA-SIGNER"
+
+# Create the intermediate certificate
+openssl x509 -sha256 -req -days 730 -in mongodb-ia.csr -CA mongodb-ca.crt -CAkey mongodb-ca.key -set_serial 01 -out mongodb-ia.crt -extfile mongodb-ca.cfg -extensions v3_ca
+
+# Create the CA PEM file
+cat mongodb-ca.crt mongodb-ia.crt  > $CAFILE
 
 
 echo "######################################################################################"
@@ -192,14 +164,14 @@ for (( idx = 0; idx < length; idx++ )); do
 	EOF
 
 	
-    # Create the test key file mongodb-test-server1.key.
-    openssl genrsa -out ${host}.server.key 2048
+    # Create the key file mongodb-test-server1.key.
+    openssl genrsa -out ${host}.server.key 4096
 
     # Create the  certificate signing request 
     openssl req -new -key ${host}.server.key -out ${host}.server.csr -config csr_details_${host}.cfg
 
     # Create the server certificate 
-    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions v3_req
+    openssl x509 -sha256 -req -days 365 -in ${host}.server.csr -CA mongodb-ia.crt -CAkey mongodb-ia.key -CAcreateserial -out ${host}.server.crt -extfile csr_details_${host}.cfg -extensions v3_req
 
     # combine all together
     cat ${host}.server.crt ${host}.server.key > ${host}.server.pem
@@ -213,11 +185,11 @@ echo "##### STEP 5: Create client certificates"
 for host in "${mongodb_client_hosts[@]}"; do
 	echo "Generating certificate for client $host"
 	# key gen
-  	openssl genrsa  -out ${host}.client.key 2048
+  	openssl genrsa  -out ${host}.client.key 4096
 	# cert signing request
 	openssl req -new -key ${host}.client.key -out ${host}.client.csr -subj "$dn_prefix/OU=$ou_client/CN=${host}" 
 	# sign the cert
-    openssl x509 -sha256 -req -days 365 -in ${host}.client.csr  -CA ./SigningCA/signing-ca.crt -CAkey ./SigningCA/signing-ca.key -CAcreateserial -out ${host}.client.crt
+    openssl x509 -sha256 -req -days 365 -in ${host}.client.csr  -CA mongodb-ia.crt -CAkey mongodb-ia.key -CAcreateserial -out ${host}.client.crt
 
 	# combine all together
 	cat ${host}.client.crt ${host}.client.key > ${host}.client.pem
