@@ -1,3 +1,8 @@
+# MongoDB TLS Certificates
+
+This repo is meant to give a series of tool that makes possible the generation of self signed certificates for on-premise versions of MongoDB. This will also generate a CA certificate, which is not meant to serve production environment. Use it only in case it's not possible to use your own CA. 
+
+
 # mongodb-x509-certificates-gen
 
 to read details of the certificate, use
